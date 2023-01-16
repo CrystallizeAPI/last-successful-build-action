@@ -16,6 +16,9 @@ inputs:
     description: 'Verify SHA of workflow run commit against list of commit SHAs in repository'
     required: false
     default: 'false'
+  fallback:
+    description: 'Fallback value if we are unable to determine the SHA of a successful run. Defaults to SHA of current commit.'
+    required: false
 runs:
   using: 'node16'
   main: 'dist/index.js'

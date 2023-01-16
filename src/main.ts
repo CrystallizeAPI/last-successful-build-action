@@ -26,6 +26,8 @@ export const main = async (): Promise<void> => {
     return
   }
 
+  const fallback = getInput('fallback')?.trim() || process.env.GITHUB_SHA
+
   try {
     const octokit = getOctokit(getInput('token'))
     const repository = process.env.GITHUB_REPOSITORY
@@ -43,11 +45,11 @@ export const main = async (): Promise<void> => {
 
     if (!sha) {
       warning(
-        'Unable to determine SHA of last successful commit. Using SHA for current commit.',
+        `Unable to determine SHA of last successful commit. Using fallback value "${fallback}".`,
       )
     }
 
-    setOutput('sha', sha || process.env.GITHUB_SHA)
+    setOutput('sha', sha || fallback)
   } catch (e) {
     setFailed(e instanceof Error ? e.message : JSON.stringify(e))
   }

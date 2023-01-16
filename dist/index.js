@@ -9507,130 +9507,146 @@ function wrappy (fn, cb) {
 
 /***/ }),
 
-/***/ 399:
-/***/ (function(__unused_webpack_module, exports, __nccwpck_require__) {
+/***/ 2368:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
 
 "use strict";
 
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || function (mod) {
-    if (mod && mod.__esModule) return mod;
-    var result = {};
-    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
-    __setModuleDefault(result, mod);
-    return result;
-};
-var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
-    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
-    return new (P || (P = Promise))(function (resolve, reject) {
-        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
-        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
-        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
-        step((generator = generator.apply(thisArg, _arguments || [])).next());
-    });
-};
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-const core = __importStar(__nccwpck_require__(2186));
-const github = __importStar(__nccwpck_require__(5438));
-const child_process_1 = __nccwpck_require__(2081);
-const util_1 = __nccwpck_require__(3837);
-const execAsync = (0, util_1.promisify)(child_process_1.exec);
+exports.WorkflowNotFoundError = exports.getLastSuccessfulCiRunSha = void 0;
+const get_workflow_id_1 = __nccwpck_require__(5862);
+const verify_sha_1 = __nccwpck_require__(969);
+const getLastSuccessfulCiRunSha = async (octokit, logger, owner, repo, workflowName, branch, verify) => {
+    const workflowId = await (0, get_workflow_id_1.getWorkflowId)(octokit, owner, repo, workflowName);
+    logger.debug(`ID for workflow "${workflowName}" is ${workflowId}`);
+    if (!workflowId) {
+        throw new WorkflowNotFoundError(workflowName);
+    }
+    const iterator = octokit.paginate.iterator(octokit.rest.actions.listWorkflowRuns, {
+        owner,
+        repo,
+        ...(branch && branch.trim().length > 0 && { branch: branch.trim() }),
+        status: 'success',
+        workflow_id: workflowId,
+        per_page: 50,
+    });
+    for await (const response of iterator) {
+        const runs = response.data.sort((r1, r2) => new Date(r2.created_at).getTime() - new Date(r1.created_at).getTime());
+        for (const run of runs) {
+            const sha = run.head_sha;
+            if (verify && !(await (0, verify_sha_1.verifySha)(logger, sha))) {
+                logger.warning(`Failed to verify commit ${run.head_sha}. Skipping.`);
+                continue;
+            }
+            logger.info(verify
+                ? `Commit ${run.head_sha} from run ${run.html_url} verified as last successful CI run.`
+                : `Using ${run.head_sha} from run ${run.html_url} as last successful CI run.`);
+            return sha;
+        }
+    }
+};
+exports.getLastSuccessfulCiRunSha = getLastSuccessfulCiRunSha;
+class WorkflowNotFoundError extends Error {
+    constructor(name) {
+        super(`No workflow id found for workflow named "${name}"`);
+    }
+}
+exports.WorkflowNotFoundError = WorkflowNotFoundError;
+
+
+/***/ }),
+
+/***/ 5862:
+/***/ ((__unused_webpack_module, exports) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.getWorkflowId = void 0;
+const getWorkflowId = async (octokit, owner, repo, workflowName) => {
+    const normalizedName = workflowName.toLowerCase();
+    const iterator = octokit.paginate.iterator(octokit.rest.actions.listRepoWorkflows, { owner, repo });
+    for await (const response of iterator) {
+        for (const workflow of response.data) {
+            if (workflow.name.toLowerCase() === normalizedName) {
+                return workflow.id;
+            }
+        }
+    }
+};
+exports.getWorkflowId = getWorkflowId;
+
+
+/***/ }),
+
+/***/ 399:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.main = void 0;
+const core_1 = __nccwpck_require__(2186);
+const github_1 = __nccwpck_require__(5438);
+const get_last_successful_ci_run_sha_1 = __nccwpck_require__(2368);
+const logger = {
+    debug: core_1.debug,
+    info: core_1.info,
+    warning: core_1.warning,
+};
+const main = async () => {
+    if (!process.env.GITHUB_REPOSITORY || !process.env.GITHUB_SHA) {
+        (0, core_1.setFailed)('GITHUB_REPOSITORY or GITHUB_SHA env vars not set. Are you running in GH Actions?');
+        return;
+    }
+    const fallback = (0, core_1.getInput)('fallback')?.trim() || process.env.GITHUB_SHA;
+    try {
+        const octokit = (0, github_1.getOctokit)((0, core_1.getInput)('token'));
+        const repository = process.env.GITHUB_REPOSITORY;
+        const [owner, repo] = repository.split('/');
+        const sha = await (0, get_last_successful_ci_run_sha_1.getLastSuccessfulCiRunSha)(octokit, logger, owner, repo, (0, core_1.getInput)('workflow'), (0, core_1.getInput)('branch'), (0, core_1.getBooleanInput)('verify'));
+        if (!sha) {
+            (0, core_1.warning)(`Unable to determine SHA of last successful commit. Using fallback value "${fallback}".`);
+        }
+        (0, core_1.setOutput)('sha', sha || fallback);
+    }
+    catch (e) {
+        (0, core_1.setFailed)(e instanceof Error ? e.message : JSON.stringify(e));
+    }
+};
+exports.main = main;
+(0, exports.main)();
+
+
+/***/ }),
+
+/***/ 969:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.verifySha = void 0;
+const node_child_process_1 = __nccwpck_require__(7718);
 let repoShas;
-const verifyCommit = (sha) => __awaiter(void 0, void 0, void 0, function* () {
+const verifySha = async (logger, sha) => {
     if (!repoShas) {
         try {
             const cmd = `git log --format=format:%H`;
-            core.info(`Getting list of SHAs in repo via command "${cmd}"`);
-            const { stdout } = yield execAsync(cmd);
-            repoShas = stdout.trim().split('\n');
+            logger.info(`Getting list of SHAs in repo via command "${cmd}"`);
+            repoShas = (0, node_child_process_1.execSync)(cmd).toString().trim().split('\n');
+            logger.debug(`Retrieved ${repoShas.length} SHAs`);
         }
         catch (e) {
             repoShas = [];
-            core.warning(`Error while attempting to get list of SHAs: ${e === null || e === void 0 ? void 0 : e.message}`);
+            logger.warning(`Error while attempting to get list of SHAs: ${e?.message}`);
             return false;
         }
     }
-    core.info(`Looking for SHA ${sha} in repo SHAs`);
+    logger.info(`Looking for SHA ${sha} in repo SHAs`);
     return repoShas.includes(sha);
-});
-function run() {
-    var _a;
-    return __awaiter(this, void 0, void 0, function* () {
-        try {
-            const inputs = {
-                token: core.getInput("token"),
-                branch: core.getInput("branch"),
-                workflow: core.getInput("workflow"),
-                verify: core.getInput("verify") === "true" ? true : false
-            };
-            const octokit = github.getOctokit(inputs.token);
-            const repository = process.env.GITHUB_REPOSITORY;
-            const [owner, repo] = repository.split("/");
-            const workflows = yield octokit.rest.actions.listRepoWorkflows({ owner, repo });
-            const workflowId = (_a = workflows.data.workflows.find(w => w.name.toLowerCase() === inputs.workflow.toLowerCase())) === null || _a === void 0 ? void 0 : _a.id;
-            if (!workflowId) {
-                core.setFailed(`No workflow exists with the name "${inputs.workflow}"`);
-                return;
-            }
-            else {
-                core.info(`Discovered workflowId for search: ${workflowId}`);
-            }
-            const response = yield octokit.rest.actions.listWorkflowRuns({ owner, repo, workflow_id: workflowId, per_page: 100 });
-            const runs = response.data.workflow_runs
-                .filter(x => (!inputs.branch || x.head_branch === inputs.branch) && x.conclusion === "success")
-                .sort((r1, r2) => new Date(r2.created_at).getTime() - new Date(r1.created_at).getTime());
-            let triggeringSha = process.env.GITHUB_SHA;
-            let sha = undefined;
-            if (runs.length > 0) {
-                for (const run of runs) {
-                    core.debug(`This SHA: ${triggeringSha}`);
-                    core.debug(`Run SHA: ${run.head_sha}`);
-                    core.debug(`Run Branch: ${run.head_branch}`);
-                    core.debug(`Wanted branch: ${inputs.branch}`);
-                    if (inputs.branch && run.head_branch !== inputs.branch) {
-                        continue;
-                    }
-                    if (inputs.verify && !(yield verifyCommit(run.head_sha))) {
-                        core.warning(`Failed to verify commit ${run.head_sha}. Skipping.`);
-                        continue;
-                    }
-                    core.info(inputs.verify
-                        ? `Commit ${run.head_sha} from run ${run.html_url} verified as last successful CI run.`
-                        : `Using ${run.head_sha} from run ${run.html_url} as last successful CI run.`);
-                    sha = run.head_sha;
-                    break;
-                }
-            }
-            else {
-                core.info(`No previous runs found for branch ${inputs.branch}.`);
-            }
-            if (!sha) {
-                core.warning("Unable to determine SHA of last successful commit. Using SHA for current commit.");
-                sha = triggeringSha;
-            }
-            core.setOutput('sha', sha);
-        }
-        catch (error) {
-            core.setFailed(error === null || error === void 0 ? void 0 : error.message);
-        }
-    });
-}
-run();
+};
+exports.verifySha = verifySha;
 
 
 /***/ }),
@@ -9648,14 +9664,6 @@ module.exports = eval("require")("encoding");
 
 "use strict";
 module.exports = require("assert");
-
-/***/ }),
-
-/***/ 2081:
-/***/ ((module) => {
-
-"use strict";
-module.exports = require("child_process");
 
 /***/ }),
 
@@ -9704,6 +9712,14 @@ module.exports = require("https");
 
 "use strict";
 module.exports = require("net");
+
+/***/ }),
+
+/***/ 7718:
+/***/ ((module) => {
+
+"use strict";
+module.exports = require("node:child_process");
 
 /***/ }),
 

@@ -1,6 +1,6 @@
 name: 'last-successful-build-action'
-description: 'Action to find the sha of the last successful workflow of a branch.'
-author: 'Samhammer AG'
+description: 'Action to find the SHA of the last successful workflow of a branch.'
+author: 'Samhammer AG & Crystallize API'
 inputs:
   token:
     description: 'GITHUB_TOKEN or a repo scoped PAT.'

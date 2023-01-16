@@ -1,103 +1,56 @@
-import * as core from '@actions/core'
-import * as github from "@actions/github";
-import { exec } from 'child_process';
-import { promisify } from 'util';
+import {
+  setFailed,
+  setOutput,
+  getInput,
+  debug,
+  info,
+  warning,
+  getBooleanInput,
+} from '@actions/core'
+import { getOctokit } from '@actions/github'
+import { getLastSuccessfulCiRunSha } from './get-last-successful-ci-run-sha'
+import { Logger } from './util'
 
-const execAsync = promisify(exec);
-
-let repoShas: string[] | undefined;
-
-const verifyCommit =  async (sha: string): Promise<boolean> => {
-    if (!repoShas) {
-        try {
-            const cmd = `git log --format=format:%H`;
-            core.info(`Getting list of SHAs in repo via command "${cmd}"`);
-
-            const { stdout } = await execAsync(cmd);
-
-            repoShas = stdout.trim().split('\n');
-        } catch (e: any) {
-            repoShas = [];
-            core.warning(`Error while attempting to get list of SHAs: ${e?.message}`);
-
-            return false;
-        }
-    }
-
-    core.info(`Looking for SHA ${sha} in repo SHAs`);
-
-    return repoShas.includes(sha);
+const logger: Logger = {
+  debug,
+  info,
+  warning,
 }
 
-async function run(): Promise<void> {
-    try {
-        const inputs = {
-            token: core.getInput("token"),
-            branch: core.getInput("branch"),
-            workflow: core.getInput("workflow"),
-            verify: core.getInput("verify") === "true" ? true : false
-        };
+export const main = async (): Promise<void> => {
+  if (!process.env.GITHUB_REPOSITORY || !process.env.GITHUB_SHA) {
+    setFailed(
+      'GITHUB_REPOSITORY or GITHUB_SHA env vars not set. Are you running in GH Actions?',
+    )
 
-        const octokit = github.getOctokit(inputs.token);
-        const repository: string = process.env.GITHUB_REPOSITORY as string;
-        const [owner, repo] = repository.split("/");
+    return
+  }
 
-        const workflows = await octokit.rest.actions.listRepoWorkflows({ owner, repo });
-        const workflowId = workflows.data.workflows.find(w => w.name.toLowerCase() === inputs.workflow.toLowerCase())?.id;
+  try {
+    const octokit = getOctokit(getInput('token'))
+    const repository = process.env.GITHUB_REPOSITORY
+    const [owner, repo] = repository.split('/')
 
-        if (!workflowId) {
-            core.setFailed(`No workflow exists with the name "${inputs.workflow}"`);
-            return;
-        } else {
-            core.info(`Discovered workflowId for search: ${workflowId}`);
-        }
+    const sha = await getLastSuccessfulCiRunSha(
+      octokit,
+      logger,
+      owner,
+      repo,
+      getInput('workflow'),
+      getInput('branch'),
+      getBooleanInput('verify'),
+    )
 
-        const response = await octokit.rest.actions.listWorkflowRuns({ owner, repo, workflow_id: workflowId, per_page: 100 });
-        const runs = response.data.workflow_runs
-            .filter(x => (!inputs.branch || x.head_branch === inputs.branch) && x.conclusion === "success")
-            .sort((r1, r2) => new Date(r2.created_at).getTime() - new Date(r1.created_at).getTime());
-
-        let triggeringSha = process.env.GITHUB_SHA as string;
-        let sha: string | undefined = undefined;
-        
-        if (runs.length > 0) {
-            for (const run of runs) {
-                core.debug(`This SHA: ${triggeringSha}`);
-                core.debug(`Run SHA: ${run.head_sha}`);
-                core.debug(`Run Branch: ${run.head_branch}`);
-                core.debug(`Wanted branch: ${inputs.branch}`);
-
-                if (inputs.branch && run.head_branch !== inputs.branch){
-                    continue;
-                }
-
-                if (inputs.verify && !await verifyCommit(run.head_sha)) {
-                    core.warning(`Failed to verify commit ${run.head_sha}. Skipping.`);
-                    continue;
-                }
-
-                core.info(
-                    inputs.verify
-                    ? `Commit ${run.head_sha} from run ${run.html_url} verified as last successful CI run.`
-                    : `Using ${run.head_sha} from run ${run.html_url} as last successful CI run.`
-                );
-                sha = run.head_sha;
-
-                break;
-            }
-        } else {
-            core.info(`No previous runs found for branch ${inputs.branch}.`);
-        }
-
-        if (!sha) {
-            core.warning("Unable to determine SHA of last successful commit. Using SHA for current commit.");
-            sha = triggeringSha;
-        }
-
-        core.setOutput('sha', sha);
-    } catch (error: any) {
-        core.setFailed(error?.message);
+    if (!sha) {
+      warning(
+        'Unable to determine SHA of last successful commit. Using SHA for current commit.',
+      )
     }
+
+    setOutput('sha', sha || process.env.GITHUB_SHA)
+  } catch (e) {
+    setFailed(e instanceof Error ? e.message : JSON.stringify(e))
+  }
 }
 
-run();
+main()

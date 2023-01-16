@@ -1,6 +1,6 @@
 {
   "name": "last-successful-build-action",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
   "description": "Action to find the sha of the last successful workflow run.",
   "main": "dist/index.js",
@@ -23,8 +23,10 @@
     "@actions/github": "~5.1.1"
   },
   "devDependencies": {
+    "@tsconfig/node16": "^1.0.3",
     "@types/node": "~16.11.7",
     "@vercel/ncc": "~0.34.0",
+    "prettier": "^2.8.3",
     "typescript": "~4.8.4"
   }
 }

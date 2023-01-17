@@ -9516,12 +9516,36 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.WorkflowNotFoundError = exports.getLastSuccessfulCiRunSha = void 0;
 const get_workflow_id_1 = __nccwpck_require__(5862);
 const verify_sha_1 = __nccwpck_require__(969);
-const getLastSuccessfulCiRunSha = async (octokit, logger, owner, repo, workflowName, branch, verify) => {
-    const workflowId = await (0, get_workflow_id_1.getWorkflowId)(octokit, owner, repo, workflowName);
-    logger.debug(`ID for workflow "${workflowName}" is ${workflowId}`);
+const getLastSuccessfulCiRunSha = async (octokit, logger, owner, repo, options) => {
+    const workflowId = await (0, get_workflow_id_1.getWorkflowId)(octokit, owner, repo, options.workflow);
+    logger.debug(`ID for workflow "${options.workflow}" is ${workflowId}`);
     if (!workflowId) {
-        throw new WorkflowNotFoundError(workflowName);
+        throw new WorkflowNotFoundError(options.workflow);
     }
+    const getSha = (branchOrTag) => getFirstSuccessfulRunForBranch(octokit, logger, owner, repo, workflowId, options.verify, branchOrTag);
+    if (options.mode === 'tags') {
+        const iterator = octokit.paginate.iterator(octokit.rest.repos.listTags, {
+            owner,
+            repo,
+        });
+        for await (const response of iterator) {
+            for (const tag of response.data) {
+                if (tag.name === options.ignore) {
+                    continue;
+                }
+                const sha = await getSha(tag.name);
+                if (sha) {
+                    return sha;
+                }
+            }
+        }
+        logger.warning('No successful CI runs found for any tags.');
+        return;
+    }
+    return await getSha(options.branchName);
+};
+exports.getLastSuccessfulCiRunSha = getLastSuccessfulCiRunSha;
+const getFirstSuccessfulRunForBranch = async (octokit, logger, owner, repo, workflowId, verify, branch) => {
     const iterator = octokit.paginate.iterator(octokit.rest.actions.listWorkflowRuns, {
         owner,
         repo,
@@ -9545,7 +9569,6 @@ const getLastSuccessfulCiRunSha = async (octokit, logger, owner, repo, workflowN
         }
     }
 };
-exports.getLastSuccessfulCiRunSha = getLastSuccessfulCiRunSha;
 class WorkflowNotFoundError extends Error {
     constructor(name) {
         super(`No workflow id found for workflow named "${name}"`);
@@ -9589,6 +9612,7 @@ exports.main = void 0;
 const core_1 = __nccwpck_require__(2186);
 const github_1 = __nccwpck_require__(5438);
 const get_last_successful_ci_run_sha_1 = __nccwpck_require__(2368);
+const normalize_input_1 = __nccwpck_require__(9330);
 const logger = {
     debug: core_1.debug,
     info: core_1.info,
@@ -9599,23 +9623,86 @@ const main = async () => {
         (0, core_1.setFailed)('GITHUB_REPOSITORY or GITHUB_SHA env vars not set. Are you running in GH Actions?');
         return;
     }
-    const fallback = (0, core_1.getInput)('fallback')?.trim() || process.env.GITHUB_SHA;
     try {
         const octokit = (0, github_1.getOctokit)((0, core_1.getInput)('token'));
-        const repository = process.env.GITHUB_REPOSITORY;
-        const [owner, repo] = repository.split('/');
-        const sha = await (0, get_last_successful_ci_run_sha_1.getLastSuccessfulCiRunSha)(octokit, logger, owner, repo, (0, core_1.getInput)('workflow'), (0, core_1.getInput)('branch'), (0, core_1.getBooleanInput)('verify'));
+        const [owner, repo] = process.env.GITHUB_REPOSITORY.split('/');
+        const options = await (0, normalize_input_1.normalizeInput)(octokit, owner, repo);
+        logger.info(options.mode === 'tags'
+            ? `Getting SHA of last successful CI run for tags, ignoring tag ${options.ignore}.`
+            : `Getting SHA of last successful CI run for branch ${options.branchName}.`);
+        const sha = await (0, get_last_successful_ci_run_sha_1.getLastSuccessfulCiRunSha)(octokit, logger, owner, repo, options);
         if (!sha) {
-            (0, core_1.warning)(`Unable to determine SHA of last successful commit. Using fallback value "${fallback}".`);
+            (0, core_1.warning)(`Unable to determine SHA of last successful commit. Using fallback value "${options.fallback}".`);
         }
-        (0, core_1.setOutput)('sha', sha || fallback);
+        (0, core_1.setOutput)('sha', sha || options.fallback);
     }
     catch (e) {
-        (0, core_1.setFailed)(e instanceof Error ? e.message : JSON.stringify(e));
+        return (0, core_1.setFailed)(e instanceof Error ? e.message : JSON.stringify(e));
     }
 };
 exports.main = main;
 (0, exports.main)();
+
+
+/***/ }),
+
+/***/ 9330:
+/***/ ((__unused_webpack_module, exports, __nccwpck_require__) => {
+
+"use strict";
+
+Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.NoBranchNameSpecifiedError = exports.normalizeInput = void 0;
+const core_1 = __nccwpck_require__(2186);
+const normalizeInput = async (octokit, owner, repo) => {
+    const tagsOnly = (0, core_1.getBooleanInput)('tagsOnly');
+    const branch = (0, core_1.getInput)('branch', { trimWhitespace: true });
+    if (!branch) {
+        throw new NoBranchNameSpecifiedError();
+    }
+    return {
+        workflow: (0, core_1.getInput)('workflow', { trimWhitespace: true }),
+        verify: (0, core_1.getBooleanInput)('verify'),
+        fallback: await determineFallbackValue(octokit, owner, repo, tagsOnly, branch),
+        ...(tagsOnly
+            ? {
+                mode: 'tags',
+                ignore: branch,
+            }
+            : {
+                mode: 'branch',
+                branchName: branch,
+            }),
+    };
+};
+exports.normalizeInput = normalizeInput;
+const determineFallbackValue = async (octokit, owner, repo, tagsOnly, ignoredTag) => {
+    let fallback = (0, core_1.getInput)('fallback')?.trim();
+    if (fallback) {
+        return fallback;
+    }
+    if (!tagsOnly) {
+        return 'origin/main';
+    }
+    const iterator = octokit.paginate.iterator(octokit.rest.repos.listTags, {
+        owner,
+        repo,
+    });
+    for await (const result of iterator) {
+        for (const t of result.data) {
+            if (t.name !== ignoredTag) {
+                return t.name;
+            }
+        }
+    }
+    return process.env.GITHUB_SHA;
+};
+class NoBranchNameSpecifiedError extends Error {
+    constructor() {
+        super('Branch name needs to be a non empty string, unless tagsOnly is set to true.');
+    }
+}
+exports.NoBranchNameSpecifiedError = NoBranchNameSpecifiedError;
 
 
 /***/ }),
@@ -9633,17 +9720,17 @@ const verifySha = async (logger, sha) => {
     if (!repoShas) {
         try {
             const cmd = `git log --format=format:%H`;
-            logger.info(`Getting list of SHAs in repo via command "${cmd}"`);
+            logger.debug(`Getting list of SHAs in repo via command "${cmd}"`);
             repoShas = (0, node_child_process_1.execSync)(cmd).toString().trim().split('\n');
             logger.debug(`Retrieved ${repoShas.length} SHAs`);
         }
         catch (e) {
             repoShas = [];
-            logger.warning(`Error while attempting to get list of SHAs: ${e?.message}`);
+            logger.warning(`Error while attempting to get list of SHAs: ${e instanceof Error ? e?.message : JSON.stringify(e)}`);
             return false;
         }
     }
-    logger.info(`Looking for SHA ${sha} in repo SHAs`);
+    logger.debug(`Looking for SHA ${sha} in repo SHAs`);
     return repoShas.includes(sha);
 };
 exports.verifySha = verifySha;

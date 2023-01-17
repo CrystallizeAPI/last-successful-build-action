@@ -1,24 +1,71 @@
 import { getWorkflowId } from './get-workflow-id'
 import { Logger, OctokitInstance } from './util'
 import { verifySha } from './verify-sha'
+import { NormalizedOptions } from './normalize-input'
 
 export const getLastSuccessfulCiRunSha = async (
   octokit: OctokitInstance,
   logger: Logger,
   owner: string,
   repo: string,
-  workflowName: string,
-  branch: string,
-  verify: boolean,
+  options: NormalizedOptions,
 ): Promise<string | undefined> => {
-  const workflowId = await getWorkflowId(octokit, owner, repo, workflowName)
+  const workflowId = await getWorkflowId(octokit, owner, repo, options.workflow)
 
-  logger.debug(`ID for workflow "${workflowName}" is ${workflowId}`)
+  logger.debug(`ID for workflow "${options.workflow}" is ${workflowId}`)
 
   if (!workflowId) {
-    throw new WorkflowNotFoundError(workflowName)
+    throw new WorkflowNotFoundError(options.workflow)
   }
 
+  const getSha = (branchOrTag: string) =>
+    getFirstSuccessfulRunForBranch(
+      octokit,
+      logger,
+      owner,
+      repo,
+      workflowId,
+      options.verify,
+      branchOrTag,
+    )
+
+  if (options.mode === 'tags') {
+    const iterator = octokit.paginate.iterator(octokit.rest.repos.listTags, {
+      owner,
+      repo,
+    })
+
+    for await (const response of iterator) {
+      for (const tag of response.data) {
+        if (tag.name === options.ignore) {
+          continue
+        }
+
+        const sha = await getSha(tag.name)
+
+        if (sha) {
+          return sha
+        }
+      }
+    }
+
+    logger.warning('No successful CI runs found for any tags.')
+
+    return
+  }
+
+  return await getSha(options.branchName)
+}
+
+const getFirstSuccessfulRunForBranch = async (
+  octokit: OctokitInstance,
+  logger: Logger,
+  owner: string,
+  repo: string,
+  workflowId: number,
+  verify: boolean,
+  branch: string,
+): Promise<string | undefined> => {
   const iterator = octokit.paginate.iterator(
     octokit.rest.actions.listWorkflowRuns,
     {

@@ -7,18 +7,23 @@ inputs:
     default: ${{ github.token }}
     required: true
   branch:
-    description: 'Branch for the workflow to look for.'
+    description: 'Name of the branch to load CI runs for. When tagsOnly is set to true, this value will be ignored when looking for the latest previous tag.'
     required: true
   workflow:
-    description: 'Workflow name to look for.'
+    description: 'Name of the workflow to load CI runs for.'
     required: false
   verify:
     description: 'Verify SHA of workflow run commit against list of commit SHAs in repository'
     required: false
     default: 'false'
   fallback:
-    description: 'Fallback value if we are unable to determine the SHA of a successful run. Defaults to SHA of current commit.'
+    description: 'Fallback value if we are unable to determine the SHA of a successful run. Defaults to "origin/main", or to latest non ignored tag if tagsOnly is set to true.'
     required: false
+  tagsOnly:
+    description: 'Only look for CI runs for tags'
+    required: false
+    default: 'false'
+
 runs:
   using: 'node16'
   main: 'dist/index.js'

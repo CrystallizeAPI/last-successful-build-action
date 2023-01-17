@@ -10,22 +10,24 @@ export const verifySha = async (
   if (!repoShas) {
     try {
       const cmd = `git log --format=format:%H`
-      logger.info(`Getting list of SHAs in repo via command "${cmd}"`)
+      logger.debug(`Getting list of SHAs in repo via command "${cmd}"`)
 
       repoShas = execSync(cmd).toString().trim().split('\n')
 
       logger.debug(`Retrieved ${repoShas.length} SHAs`)
-    } catch (e: any) {
+    } catch (e) {
       repoShas = []
       logger.warning(
-        `Error while attempting to get list of SHAs: ${e?.message}`,
+        `Error while attempting to get list of SHAs: ${
+          e instanceof Error ? e?.message : JSON.stringify(e)
+        }`,
       )
 
       return false
     }
   }
 
-  logger.info(`Looking for SHA ${sha} in repo SHAs`)
+  logger.debug(`Looking for SHA ${sha} in repo SHAs`)
 
   return repoShas.includes(sha)
 }
